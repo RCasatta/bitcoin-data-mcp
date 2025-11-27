@@ -33,6 +33,18 @@ struct GetLiquidTxParams {
     txid: String,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetBitcoinBlockParams {
+    #[schemars(description = "The block hash to look up.")]
+    hash: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetLiquidBlockParams {
+    #[schemars(description = "The block hash to look up.")]
+    hash: String,
+}
+
 // 2. DEFINE YOUR SERVER
 // This struct will hold any state your server needs (like API keys, etc.)
 // For "Hello World," it's empty.
@@ -53,15 +65,22 @@ fn make_schema<T: schemars::JsonSchema>()
     }
 }
 
-// Fetch transaction from Esplora API
-fn fetch_transaction(base_url: &str, txid: &str) -> Result<String, String> {
-    let url = format!("{base_url}/tx/{txid}");
-    let response = ureq::get(&url)
+// Fetch data from Esplora API
+fn fetch_esplora(url: &str) -> Result<String, String> {
+    let response = ureq::get(url)
         .call()
         .map_err(|e| format!("HTTP request failed: {e}"))?;
     response
         .into_string()
         .map_err(|e| format!("Failed to read response: {e}"))
+}
+
+fn fetch_transaction(base_url: &str, txid: &str) -> Result<String, String> {
+    fetch_esplora(&format!("{base_url}/tx/{txid}"))
+}
+
+fn fetch_block(base_url: &str, hash: &str) -> Result<String, String> {
+    fetch_esplora(&format!("{base_url}/block/{hash}"))
 }
 
 // 3. IMPLEMENT THE TOOL HANDLER
@@ -89,6 +108,24 @@ impl ServerHandler for MyServer {
                     title: None,
                     description: Some("Get a Liquid transaction by its txid from the Esplora API. Returns full transaction data including confirmation status and block height.".into()),
                     input_schema: make_schema::<GetLiquidTxParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_bitcoin_block".into(),
+                    title: None,
+                    description: Some("Get a Bitcoin block by its hash from the Esplora API. Returns block data including height, timestamp, tx_count, size, and weight.".into()),
+                    input_schema: make_schema::<GetBitcoinBlockParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_liquid_block".into(),
+                    title: None,
+                    description: Some("Get a Liquid block by its hash from the Esplora API. Returns block data including height, timestamp, tx_count, size, and weight.".into()),
+                    input_schema: make_schema::<GetLiquidBlockParams>()?,
                     output_schema: None,
                     annotations: None,
                     icons: None,
@@ -125,6 +162,24 @@ impl ServerHandler for MyServer {
                         ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                     })?;
                 let result = fetch_transaction(LIQUID_API_BASE, &tx_params.txid)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_bitcoin_block" => {
+                let block_params: GetBitcoinBlockParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_block(BITCOIN_API_BASE, &block_params.hash)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_liquid_block" => {
+                let block_params: GetLiquidBlockParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                    ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                })?;
+                let result = fetch_block(LIQUID_API_BASE, &block_params.hash)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
@@ -292,27 +347,24 @@ mod tests {
         );
 
         let tools = tools_response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2, "Should have exactly 2 tools");
+        assert_eq!(tools.len(), 4, "Should have exactly 4 tools");
 
-        // Check bitcoin tx tool
-        let btc_tool = tools
-            .iter()
-            .find(|t| t["name"] == "get_bitcoin_tx")
-            .expect("Should have get_bitcoin_tx tool");
-        assert!(
-            btc_tool["inputSchema"].is_object(),
-            "Should have inputSchema"
-        );
-
-        // Check liquid tx tool
-        let liquid_tool = tools
-            .iter()
-            .find(|t| t["name"] == "get_liquid_tx")
-            .expect("Should have get_liquid_tx tool");
-        assert!(
-            liquid_tool["inputSchema"].is_object(),
-            "Should have inputSchema"
-        );
+        // Check all tools exist with proper schema
+        for tool_name in [
+            "get_bitcoin_tx",
+            "get_liquid_tx",
+            "get_bitcoin_block",
+            "get_liquid_block",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("Should have {tool_name} tool"));
+            assert!(
+                tool["inputSchema"].is_object(),
+                "{tool_name} should have inputSchema"
+            );
+        }
 
         println!("✓ List tools test passed");
         for tool in tools {
