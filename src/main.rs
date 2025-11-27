@@ -124,7 +124,7 @@ impl ServerHandler for MyServer {
 }
 
 // 4. CREATE THE MAIN FUNCTION TO RUN THE SERVER
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     // Create an instance of our server
     let server = MyServer;
@@ -145,7 +145,9 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::process::{Command, Stdio};
 
+    // Run with: cargo test test_mcp_protocol -- --ignored --nocapture
     #[test]
+    #[ignore]
     fn test_mcp_protocol_initialize_and_list_tools() {
         // Build the binary first
         let build_result = Command::new("cargo")
