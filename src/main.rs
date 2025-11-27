@@ -45,6 +45,18 @@ struct GetLiquidBlockParams {
     hash: String,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetBitcoinTipHeightParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetLiquidTipHeightParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetBitcoinMempoolParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetLiquidMempoolParams {}
+
 // 2. DEFINE YOUR SERVER
 // This struct will hold any state your server needs (like API keys, etc.)
 // For "Hello World," it's empty.
@@ -81,6 +93,14 @@ fn fetch_transaction(base_url: &str, txid: &str) -> Result<String, String> {
 
 fn fetch_block(base_url: &str, hash: &str) -> Result<String, String> {
     fetch_esplora(&format!("{base_url}/block/{hash}"))
+}
+
+fn fetch_tip_height(base_url: &str) -> Result<String, String> {
+    fetch_esplora(&format!("{base_url}/blocks/tip/height"))
+}
+
+fn fetch_mempool(base_url: &str) -> Result<String, String> {
+    fetch_esplora(&format!("{base_url}/mempool"))
 }
 
 // 3. IMPLEMENT THE TOOL HANDLER
@@ -126,6 +146,42 @@ impl ServerHandler for MyServer {
                     title: None,
                     description: Some("Get a Liquid block by its hash from the Esplora API. Returns block data including height, timestamp, tx_count, size, and weight.".into()),
                     input_schema: make_schema::<GetLiquidBlockParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_bitcoin_tip_height".into(),
+                    title: None,
+                    description: Some("Get the current Bitcoin blockchain tip height from the Esplora API.".into()),
+                    input_schema: make_schema::<GetBitcoinTipHeightParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_liquid_tip_height".into(),
+                    title: None,
+                    description: Some("Get the current Liquid blockchain tip height from the Esplora API.".into()),
+                    input_schema: make_schema::<GetLiquidTipHeightParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_bitcoin_mempool".into(),
+                    title: None,
+                    description: Some("Get Bitcoin mempool statistics from the Esplora API. Returns tx count, total vsize, total fees, and fee histogram.".into()),
+                    input_schema: make_schema::<GetBitcoinMempoolParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_liquid_mempool".into(),
+                    title: None,
+                    description: Some("Get Liquid mempool statistics from the Esplora API. Returns tx count, total vsize, total fees, and fee histogram.".into()),
+                    input_schema: make_schema::<GetLiquidMempoolParams>()?,
                     output_schema: None,
                     annotations: None,
                     icons: None,
@@ -180,6 +236,26 @@ impl ServerHandler for MyServer {
                     ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                 })?;
                 let result = fetch_block(LIQUID_API_BASE, &block_params.hash)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_bitcoin_tip_height" => {
+                let result = fetch_tip_height(BITCOIN_API_BASE)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_liquid_tip_height" => {
+                let result = fetch_tip_height(LIQUID_API_BASE)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_bitcoin_mempool" => {
+                let result = fetch_mempool(BITCOIN_API_BASE)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            "get_liquid_mempool" => {
+                let result = fetch_mempool(LIQUID_API_BASE)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
@@ -347,7 +423,7 @@ mod tests {
         );
 
         let tools = tools_response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4, "Should have exactly 4 tools");
+        assert_eq!(tools.len(), 8, "Should have exactly 8 tools");
 
         // Check all tools exist with proper schema
         for tool_name in [
@@ -355,6 +431,10 @@ mod tests {
             "get_liquid_tx",
             "get_bitcoin_block",
             "get_liquid_block",
+            "get_bitcoin_tip_height",
+            "get_liquid_tip_height",
+            "get_bitcoin_mempool",
+            "get_liquid_mempool",
         ] {
             let tool = tools
                 .iter()
