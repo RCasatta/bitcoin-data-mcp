@@ -14,13 +14,23 @@ use rmcp::{
 };
 use serde::Deserialize; // For our tool's inputs
 
+// Esplora API base URLs
+const BITCOIN_API_BASE: &str = "https://blockstream.info/api";
+const LIQUID_API_BASE: &str = "https://blockstream.info/liquid/api";
+
 // 1. DEFINE YOUR TOOL'S INPUT PARAMETERS
 // The AI will see this and know what to provide.
 // 'schemars::JsonSchema' automatically builds the "menu" for the AI.
 #[derive(Deserialize, schemars::JsonSchema)]
-struct GreetParams {
-    #[schemars(description = "The name of the person to greet.")]
-    name: String,
+struct GetBitcoinTxParams {
+    #[schemars(description = "The transaction ID (txid) hash to look up.")]
+    txid: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GetLiquidTxParams {
+    #[schemars(description = "The transaction ID (txid) hash to look up.")]
+    txid: String,
 }
 
 // 2. DEFINE YOUR SERVER
@@ -28,6 +38,31 @@ struct GreetParams {
 // For "Hello World," it's empty.
 #[derive(Clone)]
 struct MyServer;
+
+// Helper function to create a schema map from a JsonSchema type
+fn make_schema<T: schemars::JsonSchema>()
+-> Result<std::sync::Arc<rmcp::serde_json::Map<String, rmcp::serde_json::Value>>, ErrorData> {
+    use std::sync::Arc;
+    let schema = schemars::schema_for!(T);
+    let input_schema = rmcp::serde_json::to_value(schema)
+        .map_err(|e| ErrorData::internal_error(format!("Failed to serialize schema: {e}"), None))?;
+    if let rmcp::serde_json::Value::Object(map) = input_schema {
+        Ok(Arc::new(map))
+    } else {
+        Err(ErrorData::internal_error("Schema is not an object", None))
+    }
+}
+
+// Fetch transaction from Esplora API
+fn fetch_transaction(base_url: &str, txid: &str) -> Result<String, String> {
+    let url = format!("{base_url}/tx/{txid}");
+    let response = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+    response
+        .into_string()
+        .map_err(|e| format!("Failed to read response: {e}"))
+}
 
 // 3. IMPLEMENT THE TOOL HANDLER
 // This is the core of your server. We implement the `ServerHandler` trait.
@@ -38,28 +73,27 @@ impl ServerHandler for MyServer {
         _params: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        use std::sync::Arc;
-        let schema = schemars::schema_for!(GreetParams);
-        let input_schema = rmcp::serde_json::to_value(schema).map_err(|e| {
-            ErrorData::internal_error(format!("Failed to serialize schema: {}", e), None)
-        })?;
-
-        let input_schema_map = if let rmcp::serde_json::Value::Object(map) = input_schema {
-            Arc::new(map)
-        } else {
-            return Err(ErrorData::internal_error("Schema is not an object", None));
-        };
-
         Ok(ListToolsResult {
-            tools: vec![Tool {
-                name: "greet".into(),
-                title: None,
-                description: Some("Greet a person by name".into()),
-                input_schema: input_schema_map,
-                output_schema: None,
-                annotations: None,
-                icons: None,
-            }],
+            tools: vec![
+                Tool {
+                    name: "get_bitcoin_tx".into(),
+                    title: None,
+                    description: Some("Get a Bitcoin transaction by its txid from the Esplora API. Returns full transaction data including confirmation status and block height.".into()),
+                    input_schema: make_schema::<GetBitcoinTxParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+                Tool {
+                    name: "get_liquid_tx".into(),
+                    title: None,
+                    description: Some("Get a Liquid transaction by its txid from the Esplora API. Returns full transaction data including confirmation status and block height.".into()),
+                    input_schema: make_schema::<GetLiquidTxParams>()?,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                },
+            ],
             next_cursor: None,
         })
     }
@@ -71,31 +105,33 @@ impl ServerHandler for MyServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool_name = params.name.as_ref();
+        let args = params.arguments.unwrap_or_default();
+        let args_value = rmcp::serde_json::Value::Object(args);
 
         // This 'match' is how you handle multiple tools.
         match tool_name {
-            "greet" => {
-                // Parse the arguments into our GreetParams struct
-                let args = params.arguments.unwrap_or_default();
-                let args_value = rmcp::serde_json::Value::Object(args);
-                let greet_params: GreetParams =
-                    rmcp::serde_json::from_value(args_value).map_err(|e| {
-                        ErrorData::invalid_request(format!("Invalid parameters: {}", e), None)
+            "get_bitcoin_tx" => {
+                let tx_params: GetBitcoinTxParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                     })?;
-
-                // This is our tool's "business logic"
-                let message = format!("Hello, {}! 👋", greet_params.name);
-
-                // We package the result and send it back to the AI
-                Ok(CallToolResult::success(vec![Content::text(message)]))
+                let result = fetch_transaction(BITCOIN_API_BASE, &tx_params.txid)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
             }
-            _ => {
-                // Handle cases where the tool name is unknown
-                Err(ErrorData::invalid_request(
-                    format!("Unknown tool: {}", tool_name),
-                    None,
-                ))
+            "get_liquid_tx" => {
+                let tx_params: GetLiquidTxParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_transaction(LIQUID_API_BASE, &tx_params.txid)
+                    .map_err(|e| ErrorData::internal_error(e, None))?;
+                Ok(CallToolResult::success(vec![Content::text(result)]))
             }
+            _ => Err(ErrorData::invalid_request(
+                format!("Unknown tool: {tool_name}"),
+                None,
+            )),
         }
     }
 
@@ -112,7 +148,7 @@ impl ServerHandler for MyServer {
                 ..Default::default()
             },
             server_info: Implementation {
-                name: "Hello MCP Server (Rust)".to_string(),
+                name: "Bitcoin Data MCP Server".to_string(),
                 title: None,
                 version: "0.1.0".to_string(),
                 icons: None,
@@ -207,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             init_response["result"]["serverInfo"]["name"],
-            "Hello MCP Server (Rust)"
+            "Bitcoin Data MCP Server"
         );
         println!("✓ Initialize test passed");
 
@@ -256,63 +292,32 @@ mod tests {
         );
 
         let tools = tools_response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1, "Should have exactly 1 tool");
+        assert_eq!(tools.len(), 2, "Should have exactly 2 tools");
 
-        let tool = &tools[0];
-        assert_eq!(tool["name"], "greet");
-        assert_eq!(tool["description"], "Greet a person by name");
-        assert!(tool["inputSchema"].is_object(), "Should have inputSchema");
+        // Check bitcoin tx tool
+        let btc_tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_bitcoin_tx")
+            .expect("Should have get_bitcoin_tx tool");
+        assert!(
+            btc_tool["inputSchema"].is_object(),
+            "Should have inputSchema"
+        );
+
+        // Check liquid tx tool
+        let liquid_tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_liquid_tx")
+            .expect("Should have get_liquid_tx tool");
+        assert!(
+            liquid_tool["inputSchema"].is_object(),
+            "Should have inputSchema"
+        );
 
         println!("✓ List tools test passed");
-        println!("  Tool name: {}", tool["name"]);
-        println!("  Tool description: {}", tool["description"]);
-
-        // Test 4: Call the greet tool
-        let call_tool_request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "greet",
-                "arguments": {
-                    "name": "TestUser"
-                }
-            }
-        });
-
-        writeln!(stdin, "{}", call_tool_request.to_string())
-            .expect("Failed to write call_tool request");
-        stdin.flush().expect("Failed to flush");
-
-        // Read call_tool response
-        let mut call_response_line = String::new();
-        reader
-            .read_line(&mut call_response_line)
-            .expect("Failed to read call_tool response");
-
-        println!("Call tool response: {}", call_response_line);
-
-        let call_response: serde_json::Value =
-            serde_json::from_str(&call_response_line).expect("Failed to parse call_tool response");
-
-        assert_eq!(call_response["jsonrpc"], "2.0");
-        assert_eq!(call_response["id"], 3);
-        assert!(
-            call_response["result"].is_object(),
-            "Should have result object"
-        );
-
-        let content = &call_response["result"]["content"];
-        assert!(content.is_array(), "Should have content array");
-        assert!(
-            content[0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("Hello, TestUser!")
-        );
-
-        println!("✓ Call tool test passed");
-        println!("  Response: {}", content[0]["text"]);
+        for tool in tools {
+            println!("  Tool: {} - {}", tool["name"], tool["description"]);
+        }
 
         // Clean up
         child.kill().expect("Failed to kill child process");
