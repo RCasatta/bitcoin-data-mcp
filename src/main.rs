@@ -14,9 +14,50 @@ use rmcp::{
 };
 use serde::Deserialize; // For our tool's inputs
 
-// Esplora API base URLs
-const BITCOIN_API_BASE: &str = "https://blockstream.info/api";
-const LIQUID_API_BASE: &str = "https://blockstream.info/liquid/api";
+// Esplora API base URLs for all supported networks
+const BITCOIN_MAINNET_API: &str = "https://blockstream.info/api";
+const BITCOIN_TESTNET_API: &str = "https://blockstream.info/testnet/api";
+const BITCOIN_SIGNET_API: &str = "https://blockstream.info/signet/api";
+const LIQUID_MAINNET_API: &str = "https://blockstream.info/liquid/api";
+const LIQUID_TESTNET_API: &str = "https://blockstream.info/liquidtestnet/api";
+
+// Network types for Bitcoin (mainnet, testnet, signet)
+#[derive(Deserialize, schemars::JsonSchema, Default, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum BitcoinNetwork {
+    #[default]
+    Mainnet,
+    Testnet,
+    Signet,
+}
+
+impl BitcoinNetwork {
+    fn api_base(&self) -> &'static str {
+        match self {
+            BitcoinNetwork::Mainnet => BITCOIN_MAINNET_API,
+            BitcoinNetwork::Testnet => BITCOIN_TESTNET_API,
+            BitcoinNetwork::Signet => BITCOIN_SIGNET_API,
+        }
+    }
+}
+
+// Network types for Liquid (mainnet, testnet)
+#[derive(Deserialize, schemars::JsonSchema, Default, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum LiquidNetwork {
+    #[default]
+    Mainnet,
+    Testnet,
+}
+
+impl LiquidNetwork {
+    fn api_base(&self) -> &'static str {
+        match self {
+            LiquidNetwork::Mainnet => LIQUID_MAINNET_API,
+            LiquidNetwork::Testnet => LIQUID_TESTNET_API,
+        }
+    }
+}
 
 // 1. DEFINE YOUR TOOL'S INPUT PARAMETERS
 // The AI will see this and know what to provide.
@@ -25,37 +66,73 @@ const LIQUID_API_BASE: &str = "https://blockstream.info/liquid/api";
 struct GetBitcoinTxParams {
     #[schemars(description = "The transaction ID (txid) hash to look up.")]
     txid: String,
+    #[schemars(
+        description = "The Bitcoin network to query: 'mainnet' (default), 'testnet', or 'signet'."
+    )]
+    #[serde(default)]
+    network: BitcoinNetwork,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct GetLiquidTxParams {
     #[schemars(description = "The transaction ID (txid) hash to look up.")]
     txid: String,
+    #[schemars(description = "The Liquid network to query: 'mainnet' (default) or 'testnet'.")]
+    #[serde(default)]
+    network: LiquidNetwork,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct GetBitcoinBlockParams {
     #[schemars(description = "The block hash to look up.")]
     hash: String,
+    #[schemars(
+        description = "The Bitcoin network to query: 'mainnet' (default), 'testnet', or 'signet'."
+    )]
+    #[serde(default)]
+    network: BitcoinNetwork,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct GetLiquidBlockParams {
     #[schemars(description = "The block hash to look up.")]
     hash: String,
+    #[schemars(description = "The Liquid network to query: 'mainnet' (default) or 'testnet'.")]
+    #[serde(default)]
+    network: LiquidNetwork,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct GetBitcoinTipHeightParams {}
+struct GetBitcoinTipHeightParams {
+    #[schemars(
+        description = "The Bitcoin network to query: 'mainnet' (default), 'testnet', or 'signet'."
+    )]
+    #[serde(default)]
+    network: BitcoinNetwork,
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct GetLiquidTipHeightParams {}
+struct GetLiquidTipHeightParams {
+    #[schemars(description = "The Liquid network to query: 'mainnet' (default) or 'testnet'.")]
+    #[serde(default)]
+    network: LiquidNetwork,
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct GetBitcoinMempoolParams {}
+struct GetBitcoinMempoolParams {
+    #[schemars(
+        description = "The Bitcoin network to query: 'mainnet' (default), 'testnet', or 'signet'."
+    )]
+    #[serde(default)]
+    network: BitcoinNetwork,
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct GetLiquidMempoolParams {}
+struct GetLiquidMempoolParams {
+    #[schemars(description = "The Liquid network to query: 'mainnet' (default) or 'testnet'.")]
+    #[serde(default)]
+    network: LiquidNetwork,
+}
 
 // 2. DEFINE YOUR SERVER
 // This struct will hold any state your server needs (like API keys, etc.)
@@ -208,7 +285,7 @@ impl ServerHandler for MyServer {
                     .map_err(|e| {
                         ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                     })?;
-                let result = fetch_transaction(BITCOIN_API_BASE, &tx_params.txid)
+                let result = fetch_transaction(tx_params.network.api_base(), &tx_params.txid)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
@@ -217,7 +294,7 @@ impl ServerHandler for MyServer {
                     .map_err(|e| {
                         ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                     })?;
-                let result = fetch_transaction(LIQUID_API_BASE, &tx_params.txid)
+                let result = fetch_transaction(tx_params.network.api_base(), &tx_params.txid)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
@@ -226,7 +303,7 @@ impl ServerHandler for MyServer {
                     .map_err(|e| {
                         ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                     })?;
-                let result = fetch_block(BITCOIN_API_BASE, &block_params.hash)
+                let result = fetch_block(block_params.network.api_base(), &block_params.hash)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
@@ -235,27 +312,43 @@ impl ServerHandler for MyServer {
                     .map_err(|e| {
                     ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
                 })?;
-                let result = fetch_block(LIQUID_API_BASE, &block_params.hash)
+                let result = fetch_block(block_params.network.api_base(), &block_params.hash)
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             "get_bitcoin_tip_height" => {
-                let result = fetch_tip_height(BITCOIN_API_BASE)
+                let params: GetBitcoinTipHeightParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_tip_height(params.network.api_base())
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             "get_liquid_tip_height" => {
-                let result = fetch_tip_height(LIQUID_API_BASE)
+                let params: GetLiquidTipHeightParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_tip_height(params.network.api_base())
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             "get_bitcoin_mempool" => {
-                let result = fetch_mempool(BITCOIN_API_BASE)
+                let params: GetBitcoinMempoolParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_mempool(params.network.api_base())
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             "get_liquid_mempool" => {
-                let result = fetch_mempool(LIQUID_API_BASE)
+                let params: GetLiquidMempoolParams = rmcp::serde_json::from_value(args_value)
+                    .map_err(|e| {
+                        ErrorData::invalid_request(format!("Invalid parameters: {e}"), None)
+                    })?;
+                let result = fetch_mempool(params.network.api_base())
                     .map_err(|e| ErrorData::internal_error(e, None))?;
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
